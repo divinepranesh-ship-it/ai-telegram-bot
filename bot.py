@@ -1,108 +1,100 @@
 import os
 import re
-from flask import Flask, request
+import logging
 from collections import defaultdict
+from datetime import datetime, timedelta
+
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-    ContextTypes,
     MessageHandler,
     CommandHandler,
+    ContextTypes,
     filters,
 )
 
-TOKEN = os.getenv("BOT_TOKEN")
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+# ---------------- CONFIG ----------------
 
-if not TOKEN:
-    raise ValueError("BOT_TOKEN environment variable not set!")
+TOKEN = os.environ.get("BOT_TOKEN")
 
-if not RENDER_URL:
-    raise ValueError("RENDER_EXTERNAL_URL not set!")
-
-app = Flask(__name__)
-telegram_app = ApplicationBuilder().token(TOKEN).build()
-
-# ===== SETTINGS =====
-MAX_WARNINGS = 3
-BLOCKED_KEYWORDS = [
+DMCA_KEYWORDS = [
     "movie download",
-    "free movie",
-    "torrent",
-    "crack",
+    "free netflix",
+    "cracked software",
     "pirated",
+    "torrent link",
+    "mod apk",
+    "premium hack"
 ]
 
-user_warnings = defaultdict(int)
+SPAM_LIMIT = 5
+SPAM_TIME = 10  # seconds
 
+# ----------------------------------------
 
-# ===== START COMMAND =====
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Group Protection Bot Active!")
+logging.basicConfig(level=logging.INFO)
 
+user_messages = defaultdict(list)
 
-# ===== MESSAGE MONITOR =====
-async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
+# Flask app (keeps Render alive)
+app = Flask(__name__)
 
-    text = update.message.text.lower()
-    user_id = update.message.from_user.id
-    chat_id = update.message.chat.id
-
-    # Block links
-    if "http://" in text or "https://" in text:
-        await punish(update, context, "Links not allowed")
-        return
-
-    # Keyword scan
-    for word in BLOCKED_KEYWORDS:
-        if word in text:
-            await punish(update, context, "Copyright content not allowed")
-            return
-
-
-async def punish(update: Update, context: ContextTypes.DEFAULT_TYPE, reason):
-    user_id = update.message.from_user.id
-    chat_id = update.message.chat.id
-
-    user_warnings[user_id] += 1
-
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    if user_warnings[user_id] >= MAX_WARNINGS:
-        await context.bot.ban_chat_member(chat_id, user_id)
-        await context.bot.send_message(
-            chat_id,
-            f"🚫 User banned.\nReason: {reason}"
-        )
-    else:
-        await context.bot.send_message(
-            chat_id,
-            f"⚠ Warning {user_warnings[user_id]}/{MAX_WARNINGS}\nReason: {reason}"
-        )
-
-
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, monitor))
-
-
-# ===== WEBHOOK ROUTES =====
 @app.route("/")
 def home():
-    return "Bot Running"
+    return "Bot is running!"
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    await telegram_app.process_update(update)
-    return "OK"
+# ---------------- SPAM CHECK ----------------
 
+def is_spam(text: str) -> bool:
+    text = text.lower()
 
-# ===== START SERVER =====
+    # DMCA keyword scan
+    for word in DMCA_KEYWORDS:
+        if word in text:
+            return True
+
+    # Link spam detection
+    if len(re.findall(r"http[s]?://", text)) > 2:
+        return True
+
+    return False
+
+async def moderate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    user_id = message.from_user.id
+    text = message.text or ""
+
+    now = datetime.now()
+
+    # Flood control
+    user_messages[user_id] = [
+        t for t in user_messages[user_id]
+        if now - t < timedelta(seconds=SPAM_TIME)
+    ]
+    user_messages[user_id].append(now)
+
+    if len(user_messages[user_id]) > SPAM_LIMIT:
+        await message.delete()
+        return
+
+    # Keyword spam check
+    if is_spam(text):
+        await message.delete()
+        return
+
+# ---------------- START BOT ----------------
+
+def start_bot():
+    application = ApplicationBuilder().token(TOKEN).build()
+
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, moderate)
+    )
+
+    application.run_polling()
+
 if __name__ == "__main__":
-    telegram_app.bot.set_webhook(f"{RENDER_URL}/{TOKEN}")
+    import threading
+    threading.Thread(target=start_bot).start()
     app.run(host="0.0.0.0", port=10000)
