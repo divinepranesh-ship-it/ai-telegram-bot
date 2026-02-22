@@ -17,7 +17,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 
 # ================= CONFIG =================
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = "6346466600:AAHEOQUY03fbuBniXEYR2pAQCoFtoo1h2U4"
 SPAM_LIMIT = 6
 SPAM_TIME = 8
 MUTE_TIME = 120
