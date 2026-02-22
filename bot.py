@@ -14,8 +14,7 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
-BOT_TOKEN = os.environ.get("6346466600:AAGZvgfzWWKimBEPqJoh1qyvOvjYJGY5zwA")
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 SPAM_LIMIT = 6
 SPAM_TIME = 8
 MUTE_TIME = 120
